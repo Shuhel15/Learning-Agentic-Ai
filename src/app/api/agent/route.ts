@@ -1,5 +1,10 @@
-import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+// import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
+import { ChatGroq } from "@langchain/groq";
 import { NextResponse } from "next/server";
+import { tool } from "@langchain/core/tools";
+import { ToolMessage } from "@langchain/core/messages";
+import { z } from "zod";
+import getProfile from "@/profile";
 
 export async function POST(request: Request) {
   try {
@@ -21,34 +26,71 @@ export async function POST(request: Request) {
       );
     }
 
-    //Calling google chat model
-    const model = new ChatGoogleGenerativeAI({
-      model: "gemini-2.5-flash",
-      apiKey: process.env.GOOGLE_API_KEY,
-      temperature: 0.3,
+    //Calling groq chat model
+    const model = new ChatGroq({
+      model: "openai/gpt-oss-120b",
+      temperature: 0,
     });
 
-    //Generating response through model my involing it.
-    const response = await model.invoke([
+    //Tools
+    const getProfileTool = tool(() => getProfile(), {
+      name: "get_profile",
+      description:
+        "Returns the user's professional profile, skills , experience, and portfolio links.",
+      schema: z.object({}),
+    });
+
+    const modelWithTools = model.bindTools([getProfileTool]);
+
+    const message = [
       {
         role: "system",
-        content:
-          `Your are a professional job application assistant. Give clear, concise and professional response.
-          1. Dont add any symbols like: ** ,
-          `,
+        content: `You are a professional job application assistant.
+Generate a concise, professional job application email based on the job description.
+Call the get_profile tool before writing the email.
+Use only relevant skills and experience from the profile which matches job description.
+Include the user's name, contact details, portfolio and GitHub links at the bottom.
+Never invent details. Do not use Markdown bold symbols.`,
       },
       {
         role: "human",
         content: jobDesc,
       },
-    ]);
+    ];
 
-    //If response is not in string then conver it into string then return.
+    const response = await modelWithTools.invoke(message);
+
+    let finalResponse = response;
+
+    if ((response.tool_calls?.length ?? 0) > 0) {
+      const toolMessages = [];
+
+      for (const toolCall of response.tool_calls ?? []) {
+        if (toolCall.name !== "get_profile") {
+          throw new Error(`Unknown tool: ${toolCall.name}`);
+        }
+
+        const result = await getProfileTool.invoke({});
+
+        toolMessages.push(
+          new ToolMessage({
+            content: JSON.stringify(result),
+            tool_call_id: toolCall.id!,
+          }),
+        );
+      }
+      finalResponse = await modelWithTools.invoke([
+        ...message,
+        response,
+        ...toolMessages,
+      ]);
+    }
+
     return NextResponse.json({
       reply:
-        typeof response.content === "string"
-          ? response.content
-          : JSON.stringify(response.content),
+        typeof finalResponse.content === "string"
+          ? finalResponse.content
+          : JSON.stringify(finalResponse.content),
     });
   } catch (error) {
     console.error("Agent API error:", error);

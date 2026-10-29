@@ -41,7 +41,7 @@ export default function Home(){
   }
 
   return(
-    <main className="flex flex-col justify-center items-center gap-4">
+    <main className="flex flex-col justify-center items-center gap-4 mt-20">
       
       <h1 className="text-3xl font-bold">
         My First LangChain App
